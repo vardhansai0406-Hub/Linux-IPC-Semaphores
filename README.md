@@ -24,95 +24,83 @@ Execute the C Program for the desired output.
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <string.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <sys/wait.h>
+#include <time.h>
 
-#define FIFO_FILE "/tmp/my_fifo"
-#define FILE_NAME "hello.txt"
-
-void server();
-void client();
-
+#define NUM_LOOPS 10
+union semun {
+    int val;
+    struct semid_ds *buf;
+    unsigned short int *array;
+    struct seminfo *__buf;
+};
+void wait_semaphore(int sem_set_id) {
+    struct sembuf sem_op;
+    sem_op.sem_num = 0;
+    sem_op.sem_op = -1;
+    sem_op.sem_flg = 0;
+    semop(sem_set_id, &sem_op, 1);
+}
+void signal_semaphore(int sem_set_id) {
+    struct sembuf sem_op;
+    sem_op.sem_num = 0;
+    sem_op.sem_op = 1;
+    sem_op.sem_flg = 0;
+    semop(sem_set_id, &sem_op, 1);
+}
 int main() {
-    pid_t pid;
+    int sem_set_id;
+    union semun sem_val;
+    int child_pid;
+    sem_set_id = semget(IPC_PRIVATE, 1, 0600);
+    if (sem_set_id == -1) {
+        perror("semget");
+        exit(1);
+    }
 
-    // Create FIFO if it doesn't exist
-    mkfifo(FIFO_FILE, 0666);
+    printf("semaphore set created, semaphore set id '%d'.\n", sem_set_id);
+ sem_val.val = 0;
+    if (semctl(sem_set_id, 0, SETVAL, sem_val) == -1) {
+        perror("semctl");
+        exit(1);
+    }
+child_pid = fork();
 
-    pid = fork();  // Create a child process
+    if (child_pid < 0) {
+        perror("fork");
+        exit(1);
+    }
 
-    if (pid > 0) {
-        // Parent process acts as the server
-        sleep(1);  // Ensure client is ready
-        server();
-    } else if (pid == 0) {
-        // Child process acts as the client
-        client();
+    if (child_pid == 0){
+for (int i = 0; i < NUM_LOOPS; i++) {
+            wait_semaphore(sem_set_id);
+            printf("consumer: '%d'\n", i);
+            fflush(stdout);
+        }
+        exit(0);
     } else {
-        perror("Fork failed");
-        exit(EXIT_FAILURE);
+        for (int i = 0; i < NUM_LOOPS; i++) {
+            printf("producer: '%d'\n", i);
+            fflush(stdout);
+            signal_semaphore(sem_set_id);
+            usleep(500000);
+        }
+        wait(NULL);
+        semctl(sem_set_id, 0, IPC_RMID, sem_val);
+        printf("Semaphore removed.\n");
     }
 
     return 0;
 }
 
-// Server: Reads from hello.txt and writes to FIFO
-void server() {
-    int fifo_fd, file_fd;
-    char buffer[1024];
-    ssize_t bytes_read;
-
-    // Open the file to read
-    file_fd = open(FILE_NAME, O_RDONLY);
-    if (file_fd == -1) {
-        perror("Error opening hello.txt");
-        exit(EXIT_FAILURE);
-    }
-
-    // Open FIFO for writing
-    fifo_fd = open(FIFO_FILE, O_WRONLY);
-    if (fifo_fd == -1) {
-        perror("Error opening FIFO");
-        exit(EXIT_FAILURE);
-    }
-
-    // Read file and write to FIFO
-    while ((bytes_read = read(file_fd, buffer, sizeof(buffer))) > 0) {
-        write(fifo_fd, buffer, bytes_read);
-    }
-
-    close(file_fd);
-    close(fifo_fd);
-}
-
-// Client: Reads from FIFO and prints the content
-void client() {
-    int fifo_fd;
-    char buffer[1024];
-    ssize_t bytes_read;
-
-    // Open FIFO for reading
-    fifo_fd = open(FIFO_FILE, O_RDONLY);
-    if (fifo_fd == -1) {
-        perror("Error opening FIFO");
-        exit(EXIT_FAILURE);
-    }
-
-    // Read data from FIFO and print
-    while ((bytes_read = read(fifo_fd, buffer, sizeof(buffer))) > 0) {
-        write(STDOUT_FILENO, buffer, bytes_read);
-    }
-
-    close(fifo_fd);
-}
-
-
 
 ## OUTPUT
 $ ./sem.o 
-![WhatsApp Image 2026-03-23 at 10 18 48 AM](https://github.com/user-attachments/assets/97708517-29b6-4897-bacf-68ae3eee9f02)
+![WhatsApp Image 2026-03-23 at 10 36 46 AM](https://github.com/user-attachments/assets/42ac66c7-e0d1-4795-babc-651ba1e886cd)
+
 
 
 
